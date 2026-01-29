@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>血液透析模擬器</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { 
+            --primary: #2c3e50; 
+            --accent-bun: #2980b9; 
+            --accent-cr: #8e44ad; 
+            --bg-color: #f4f6f7; 
+            --current-accent: #2980b9; 
+        }
+        body { font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; background: var(--bg-color); margin: 0; padding: 20px; color: #333; transition: background 0.3s; }
+        .container { max-width: 1250px; margin: 0 auto; display: grid; grid-template-columns: 320px 1fr; gap: 20px; position: relative; }
+        
+        /* 標題區域 */
+        .app-header { grid-column: 1 / -1; text-align: center; margin-bottom: 5px; }
+        .app-title { font-size: 2rem; color: var(--primary); margin: 0; font-weight: 800; letter-spacing: 1px; }
+
+        /* 頁尾署名 */
+        .app-footer { 
+            grid-column: 1 / -1; 
+            text-align: right; 
+            margin-top: 10px; 
+            color: #95a5a6; 
+            font-size: 0.85rem; 
+            font-weight: 500;
+        }
+
+        .panel { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        
+        h2 { margin-top: 0; color: var(--primary); font-size: 1.1rem; border-bottom: 2px solid var(--current-accent); padding-bottom: 8px; transition: border-color 0.3s; }
+        
+        .mode-switcher { display: flex; gap: 10px; margin-bottom: 20px; background: #e0e0e0; padding: 5px; border-radius: 8px; }
+        .mode-btn { flex: 1; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 1rem; transition: 0.3s; background: transparent; color: #666; }
+        .mode-btn.active.bun { background: white; color: var(--accent-bun); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .mode-btn.active.cr { background: white; color: var(--accent-cr); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+
+        .input-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.85rem; margin-bottom: 4px; font-weight: 600; color: #555; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 0.95rem;}
+        input:focus, select:focus { border-color: var(--current-accent); outline: none; }
+        
+        .dynamic-section { display: none; animation: fadeIn 0.5s; }
+        .dynamic-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .auto-calc-box { background-color: #f8f9fa; padding: 10px; border-radius: 6px; border: 1px solid #e9ecef; margin-bottom: 12px; }
+        .read-only-input { background-color: #e9ecef; color: #555; cursor: not-allowed; }
+        
+        .koa-section { background-color: #fff5f5; padding: 10px; border-radius: 6px; border: 1px solid #fadbd8; margin-bottom: 12px;}
+
+        /* Kd 顯示區 */
+        .kd-display-box {
+            background: #e8f8f5; 
+            border: 1px solid #1abc9c; 
+            padding: 15px; 
+            border-radius: 8px; 
+            text-align: center;
+            margin-top: 15px;
+            margin-bottom: 15px;
+        }
+        .kd-value { font-size: 1.8rem; font-weight: 800; color: #16a085; line-height: 1.2; }
+        .kd-label { font-size: 0.85rem; color: #16a085; font-weight: 600; }
+
+        .btn { width: 100%; background: var(--current-accent); color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: background 0.3s; margin-top: 10px; }
+        .btn:hover { filter: brightness(90%); }
+        
+        .table-container { margin-top: 20px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { padding: 12px 10px; text-align: center; border-bottom: 1px solid #eee; vertical-align: middle; }
+        th { background: #f8f9fa; color: var(--primary); font-weight: 700; white-space: nowrap; }
+        
+        .sp-col { background-color: #e8f6f3; color: #16a085; font-weight: bold; }
+        .std-col { background-color: #fef9e7; color: #d35400; font-weight: bold; }
+        
+        /* stdKt/V 細項樣式 */
+        .std-breakdown { display: block; font-size: 0.75rem; color: #7f8c8d; font-weight: normal; margin-top: 4px; }
+        
+        .danger-val { color: #c0392b; font-weight: bold; }
+        .note { font-size: 0.8rem; color: #777; margin-top: 10px; line-height: 1.4; }
+
+        canvas { width: 100%; height: 380px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="app-header">
+        <h1 class="app-title">血液透析模擬器</h1>
+    </div>
+
+    <div class="panel">
+        <div class="mode-switcher">
+            <button class="mode-btn active bun" onclick="switchMode('Urea')">Urea (BUN)</button>
+            <button class="mode-btn cr" onclick="switchMode('Creatinine')">Creatinine (Cr)</button>
+        </div>
+
+        <h2>病人參數 (Patient)</h2>
+        <div class="input-group">
+            <label>體重 (kg)</label>
+            <input type="number" id="bw" value="60" oninput="updateAll()">
+        </div>
+        
+        <div id="section-urea" class="dynamic-section active auto-calc-box">
+            <div class="input-group">
+                <label>nPCR (g/kg/day)</label>
+                <input type="number" id="npcr" value="1.2" step="0.1" oninput="updateG()">
+            </div>
+            <div class="input-group">
+                <label>BUN 生成率 G (g/day)</label>
+                <input type="number" id="gRateDay_Urea" class="read-only-input" readonly>
+            </div>
+            <div class="input-group">
+                <label>BUN 生成率 G (mg/min)</label>
+                <input type="number" id="gRate_Urea" step="0.1">
+            </div>
+            <small style="color:#666;">公式: 體重 x nPCR x 16%</small>
+        </div>
+
+        <div id="section-creatinine" class="dynamic-section auto-calc-box">
+            <div class="input-group">
+                <label>年齡 (Age)</label>
+                <input type="number" id="age" value="50" oninput="updateG()">
+            </div>
+            <div class="input-group">
+                <label>性別 (Gender)</label>
+                <select id="gender" onchange="updateG()">
+                    <option value="M">男 (Male)</option>
+                    <option value="F">女 (Female)</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label>Cr 生成率 G (mg/day)</label>
+                <input type="number" id="gRateDay_Cr" class="read-only-input" readonly>
+            </div>
+            <div class="input-group">
+                <label>Cr 生成率 G (mg/min)</label>
+                <input type="number" id="gRate_Cr" step="0.01">
+            </div>
+            <small style="color:#666;">公式: (140-Age) x BW / (5 or 6)</small>
+        </div>
+
+        <div class="input-group">
+            <label>分佈體積 Vd (L)</label>
+            <input type="number" id="vd" value="36.0">
+            <small style="color:#888;">預設: 體重 x 0.6 (TBW)</small>
+        </div>
+        <div class="input-group">
+            <label>殘餘腎功能 Kru (ml/min)</label>
+            <input type="number" id="kru" value="0">
+        </div>
+
+        <h2>透析設定 (Dialysis)</h2>
+        <div class="input-group">
+            <label>透析時長 (hr)</label>
+            <input type="number" id="hdDuration" value="4" step="0.5">
+        </div>
+        <div class="input-group">
+            <label>血流速 Qb (ml/min)</label>
+            <input type="number" id="qb" value="250" oninput="updateKdDisplay()">
+        </div>
+        <div class="input-group">
+            <label>透析液 Qd (ml/min)</label>
+            <input type="number" id="qd" value="500" oninput="updateKdDisplay()">
+        </div>
+
+        <div class="koa-section">
+            <div class="input-group">
+                <label>人工腎臟型號 (Dialyzer)</label>
+                <select id="dialyzerSelect" onchange="updateKoAFromSelect()">
+                    <option value="781">F7HPS</option>
+                    <option value="1065">170H</option>
+                    <option value="1292" selected>FX80</option>
+                    <option value="1005">CTA2000</option>
+                    <option value="945">F10</option>
+                    <option value="custom">自訂 (Custom)</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label>KoA (ml/min)</label>
+                <input type="number" id="koa" value="1292" oninput="handleManualKoAInput(); updateKdDisplay()">
+            </div>
+            <small id="koa-hint" style="color:#c0392b; font-size:0.75rem; display:none;">
+                注意: 肌酸酐的 KoA 通常低於尿素 (約為 60-80%)。
+            </small>
+        </div>
+
+        <div class="kd-display-box">
+            <div class="kd-label">預估清除率 (Estimated Kd)</div>
+            <div class="kd-value"><span id="displayKd">--</span> <span style="font-size:1rem;">ml/min</span></div>
+        </div>
+
+        <button class="btn" onclick="analyzeSteadyState()">執行模擬 (Run)</button>
+    </div>
+
+    <div class="panel">
+        <h2>穩態情境比較 (Steady State)</h2>
+        <div class="table-container">
+            <table id="comparisonTable">
+                <thead>
+                    <tr>
+                        <th>模式</th>
+                        <th>Peak <span class="solute-name">BUN</span><br><small>(mg/dL)</small></th>
+                        <th>透析前平均<br><small>(PAC)</small></th>
+                        <th class="sp-col">單次 Kt/V<br><small>(spKt/V)</small></th>
+                        <th class="std-col">stdKt/V<br><small>(Gotch)</small></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="5">準備就緒...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="note">
+            * <strong><span class="solute-name">BUN</span> Mode</strong>: 目前計算對象。<br>
+            * <strong>stdKt/V</strong>: 每週標準化清除劑量。括號內為 (機器 + 殘餘腎) 貢獻值。<br>
+            * <strong>Kru</strong>: 殘餘腎功能在 24hr 持續作用下的標準化貢獻。
+        </div>
+
+        <div style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
+            <h2>濃度曲線 (第8週)</h2>
+            <select id="chartModeSelector" onchange="updateChartFromCache()" style="padding:5px;">
+                <option value="TIW">TIW (一三五)</option>
+                <option value="BIW">BIW (一四)</option>
+                <option value="Daily">Daily (每日)</option>
+            </select>
+        </div>
+        <div style="position: relative; height: 350px; width: 100%;">
+            <canvas id="chartCanvas"></canvas>
+        </div>
+    </div>
+
+    <div class="app-footer">
+        何揚醫師 2026/01
+    </div>
+</div>
+
+<script>
+    let myChart = null;
+    let simulationCache = {}; 
+    let currentMode = 'Urea'; 
+
+    function switchMode(mode) {
+        currentMode = mode;
+        const root = document.documentElement;
+        const btnUrea = document.querySelector('.mode-btn.bun');
+        const btnCr = document.querySelector('.mode-btn.cr');
+        const secUrea = document.getElementById('section-urea');
+        const secCr = document.getElementById('section-creatinine');
+        const koaHint = document.getElementById('koa-hint');
+
+        if (mode === 'Urea') {
+            root.style.setProperty('--current-accent', 'var(--accent-bun)');
+            btnUrea.classList.add('active');
+            btnCr.classList.remove('active');
+            secUrea.classList.add('active');
+            secCr.classList.remove('active');
+            koaHint.style.display = 'none';
+        } else {
+            root.style.setProperty('--current-accent', 'var(--accent-cr)');
+            btnUrea.classList.remove('active');
+            btnCr.classList.add('active');
+            secUrea.classList.remove('active');
+            secCr.classList.add('active');
+            koaHint.style.display = 'block';
+        }
+
+        document.querySelectorAll('.solute-name').forEach(el => el.textContent = (mode === 'Urea' ? 'BUN' : 'Cr'));
+        
+        updateG();
+        analyzeSteadyState();
+    }
+
+    function updateAll() {
+        const bw = parseFloat(document.getElementById('bw').value) || 0;
+        document.getElementById('vd').value = (bw * 0.6).toFixed(1);
+        updateG();
+    }
+
+    function updateG() {
+        const bw = parseFloat(document.getElementById('bw').value) || 0;
+
+        if (currentMode === 'Urea') {
+            const npcr = parseFloat(document.getElementById('npcr').value) || 0;
+            const gDay = bw * npcr * 0.16;
+            document.getElementById('gRateDay_Urea').value = gDay.toFixed(2);
+            document.getElementById('gRate_Urea').value = ((gDay * 1000) / 1440).toFixed(2);
+        } else {
+            const age = parseFloat(document.getElementById('age').value) || 0;
+            const gender = document.getElementById('gender').value;
+            const divisor = (gender === 'F') ? 6 : 5;
+            let gDay = ((140 - age) * bw) / divisor;
+            if (gDay < 0) gDay = 0;
+            
+            document.getElementById('gRateDay_Cr').value = gDay.toFixed(1);
+            document.getElementById('gRate_Cr').value = (gDay / 1440).toFixed(3);
+        }
+    }
+
+    function updateKoAFromSelect() {
+        const select = document.getElementById('dialyzerSelect');
+        const koaInput = document.getElementById('koa');
+        if (select.value !== 'custom') {
+            koaInput.value = select.value;
+            updateKdDisplay();
+        }
+    }
+
+    function handleManualKoAInput() {
+        const select = document.getElementById('dialyzerSelect');
+        const koaInput = document.getElementById('koa');
+        let match = false;
+        for (let i = 0; i < select.options.length; i++) {
+            if (select.options[i].value === koaInput.value) {
+                select.selectedIndex = i;
+                match = true;
+                break;
+            }
+        }
+        if (!match) select.value = 'custom';
+        updateKdDisplay();
+    }
+
+    function getKd(Qb, Qd, KoA) {
+        if (Qb <= 0 || KoA <= 0 || Qd <= 0) return 0;
+        const Z = Qb / Qd;
+        const NTU = KoA / Qb;
+        if (Math.abs(Qb - Qd) < 0.1) return Qb * (NTU / (NTU + 1));
+        const expVal = Math.exp(NTU * (1 - Z));
+        if (!isFinite(expVal)) return Qb; 
+        return Qb * (expVal - 1) / (expVal - Z);
+    }
+
+    function updateKdDisplay() {
+        const Qb = parseFloat(document.getElementById('qb').value) || 0;
+        const Qd = parseFloat(document.getElementById('qd').value) || 0;
+        const KoA = parseFloat(document.getElementById('koa').value) || 0;
+        
+        const kd = getKd(Qb, Qd, KoA);
+        document.getElementById('displayKd').innerText = kd.toFixed(1);
+    }
+
+    function simulateScenario(mode, params) {
+        const { V, G_mg_h, Kd_L_h, Kru_L_h, t_hd } = params;
+        
+        let starts = [];
+        if (mode === 'TIW') starts = [0, 48, 96]; 
+        else if (mode === 'BIW') starts = [0, 72]; 
+        else if (mode === 'Daily') starts = [0, 24, 48, 72, 96, 120, 144];
+
+        const weeks = 8;
+        const totalHours = 168 * weeks;
+        const dt = 0.05;
+        
+        let C = (currentMode === 'Urea') ? 50 : 5;
+        
+        let plotData = [], labels = [];
+        let maxVal = 0, sumVal = 0, countPoints = 0;
+        let preDialysisVals = []; 
+        let wasDialysis = false;
+
+        for (let t = 0; t <= totalHours; t += dt) {
+            let t_in_week = t % 168;
+            let isDialysis = false;
+            for (let s of starts) {
+                if (t_in_week >= s && t_in_week < (s + t_hd)) {
+                    isDialysis = true;
+                    break;
+                }
+            }
+            
+            if (t > 168 * (weeks - 1)) {
+                if (isDialysis && !wasDialysis) {
+                    preDialysisVals.push(C);
+                }
+            }
+            wasDialysis = isDialysis;
+
+            let K_total = Kru_L_h + (isDialysis ? Kd_L_h : 0);
+            
+            let dC = ((G_mg_h / 10) - (K_total * C)) / V * dt;
+            C += dC;
+            if (C < 0) C = 0;
+
+            if (t > (168 * (weeks - 1))) {
+                if (C > maxVal) maxVal = C;
+                sumVal += C;
+                countPoints++;
+                if (Math.abs(t % 1) < dt) { 
+                    plotData.push(C);
+                    labels.push(Math.round(t_in_week));
+                }
+            }
+        }
+        
+        const TAC = sumVal / countPoints; 
+        let PAC = TAC; 
+        if (preDialysisVals.length > 0) {
+            PAC = preDialysisVals.reduce((a, b) => a + b, 0) / preDialysisVals.length;
+        }
+
+        // stdKt/V (Gotch) 計算
+        const G_mg_min = params.G_mg_h / 60;
+        const stdKtV_total = (G_mg_min * 10080) / (PAC * 10 * V);
+        
+        // 殘餘腎 stdKt/V = Kru * 168 / V (直接週清除量)
+        // Kru_L_h * 168
+        const stdKtV_renal = (Kru_L_h * 168) / V;
+        
+        // 機器 stdKt/V = 總量 - 殘餘腎
+        let stdKtV_hd = stdKtV_total - stdKtV_renal;
+        if (stdKtV_hd < 0) stdKtV_hd = 0;
+
+        const spKtV = (Kd_L_h * t_hd) / V;
+
+        return {
+            mode: mode, peak: maxVal, tac: TAC, pac: PAC,
+            stdKtV_total: stdKtV_total,
+            stdKtV_renal: stdKtV_renal,
+            stdKtV_hd: stdKtV_hd,
+            spKtV: spKtV,
+            graphData: plotData, graphLabels: labels
+        };
+    }
+
+    function analyzeSteadyState() {
+        const getVal = (id) => parseFloat(document.getElementById(id).value) || 0;
+        const V = getVal('vd');
+        if (V <= 0.1) { alert('Vd 錯誤'); return; }
+
+        let gVal = (currentMode === 'Urea') ? getVal('gRate_Urea') : getVal('gRate_Cr');
+        const Kd_val = getKd(getVal('qb'), getVal('qd'), getVal('koa'));
+
+        const params = {
+            V: V, 
+            G_mg_h: gVal * 60,
+            t_hd: getVal('hdDuration'), 
+            Kru_L_h: getVal('kru') * 60 / 1000,
+            Kd_L_h: Kd_val * 60 / 1000
+        };
+
+        const resultTIW = simulateScenario('TIW', params);
+        const resultBIW = simulateScenario('BIW', params);
+        const resultDaily = simulateScenario('Daily', params);
+
+        simulationCache = { 'TIW': resultTIW, 'BIW': resultBIW, 'Daily': resultDaily };
+        updateTable([resultTIW, resultBIW, resultDaily]);
+        updateChartFromCache();
+    }
+
+    function updateTable(results) {
+        const tbody = document.querySelector('#comparisonTable tbody');
+        tbody.innerHTML = '';
+        const peakLimit = (currentMode === 'Urea') ? 100 : 12;
+
+        results.forEach(res => {
+            const tr = document.createElement('tr');
+            const peakClass = res.peak > peakLimit ? 'danger-val' : '';
+            const stdClass = res.stdKtV_total < 2.0 ? 'danger-val' : '';
+
+            tr.innerHTML = `
+                <td style="font-weight:bold;">${res.mode}</td>
+                <td class="${peakClass}">${res.peak.toFixed(1)}</td>
+                <td>${res.pac.toFixed(1)}</td>
+                <td class="sp-col">${res.spKtV.toFixed(2)}</td>
+                <td class="std-col ${stdClass}">
+                    ${res.stdKtV_total.toFixed(2)}
+                    <span class="std-breakdown">(HD:${res.stdKtV_hd.toFixed(2)} + Kru:${res.stdKtV_renal.toFixed(2)})</span>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function updateChartFromCache() {
+        const mode = document.getElementById('chartModeSelector').value;
+        const data = simulationCache[mode];
+        if (!data) return;
+        
+        const ctx = document.getElementById('chartCanvas').getContext('2d');
+        if (myChart) myChart.destroy();
+        
+        let baseColor;
+        if (mode === 'BIW') baseColor = '#e74c3c';
+        else if (mode === 'Daily') baseColor = '#27ae60';
+        else baseColor = (currentMode === 'Urea') ? '#2980b9' : '#8e44ad';
+        
+        myChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.graphLabels,
+                datasets: [{
+                    label: `${mode} ${currentMode} (mg/dL)`, 
+                    data: data.graphData,
+                    borderColor: baseColor, 
+                    backgroundColor: baseColor + '1a',
+                    borderWidth: 2, pointRadius: 0, fill: true, tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                scales: { x: { ticks: { stepSize: 24 } }, y: { beginAtZero: true } },
+                plugins: { tooltip: { intersect: false, mode: 'index' } }
+            }
+        });
+    }
+
+    window.onload = function() {
+        updateAll();
+        updateKoAFromSelect();
+        updateKdDisplay();
+        analyzeSteadyState();
+    };
+</script>
+
+</body>
+</html>
